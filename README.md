@@ -15,7 +15,7 @@ backend](https://llvm.org/docs/NVPTXUsage.html) to generate portable PTX
 assembly that can be translated to GPU-specific machine code by the CUDA driver
 at runtime.
 
-However, there are several pitfalls with the idea of running CUDA kernels by
+But there are several pitfalls with the idea of running CUDA kernels by
 simply telling `rustc` to build for `nvptx64-nvidia-cuda`:
 
 - LLVM's PTX code generation [is said to be
@@ -31,7 +31,7 @@ proprietary PTX code generation backend included with the CUDA SDK, and offering
 a set of crates with ergonomic Rust APIs for CUDA kernel development.
 
 However, Rust-CUDA has been unmaintained for more than two years at the time of
-this writing, and is no indication of that changing soon. This is a great
+this writing, and there is no indication of that changing soon. This is a great
 problem, because Rust-CUDA is coupled with specific CUDA and nightly Rust
 versions that date back to 2021 and are starting to show their age in the form
 of increased incompatibilities with updated execution environments. Currently,
@@ -58,7 +58,7 @@ executing Rust-CUDA as it was possible years ago. This is achieved by:
 - Patching Rust dependencies as needed to get them to build and work on more
   environments.
 
-# 🔨 Quickstart
+# 🔨 Usage
 
 First off, remember to check out the submodules containing vendor code (`git
 submodule update --init --recursive`). After that, execute `run.sh`, and if
