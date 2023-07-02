@@ -54,7 +54,7 @@ executing Rust-CUDA as it was possible years ago. This is achieved by:
   with the versions they were meant to work with, even if the host system is
   much more up-to-date.
 - Carefully selecting Rust dependency versions, so that no crate in the
-  dependency graph has an MSRV greater than what `nightly-2021-12-04`.
+  dependency graph has an MSRV greater than `nightly-2021-12-04`.
 - Patching Rust dependencies as needed to get them to build and work on more
   environments.
 
