@@ -1,0 +1,4 @@
+[submodule "vendor/Rust-CUDA"]
+	path = vendor/Rust-CUDA
+	url = https://github.com/Rust-GPU/Rust-CUDA.git
+	ignore = dirty

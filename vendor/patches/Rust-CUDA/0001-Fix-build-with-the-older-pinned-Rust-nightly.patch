@@ -1,0 +1,290 @@
+From 8363329c34eed3c93254564a92f169cc1da9cb38 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Alejandro=20Gonz=C3=A1lez?= <me@alegon.dev>
+Date: Sat, 1 Jul 2023 22:53:03 +0200
+Subject: [PATCH] Fix build with the older pinned Rust nightly
+
+To achieve this, it was necessary to rely on less system dependencies by
+replacing a Rust dependency.
+---
+ crates/rustc_codegen_nvvm/Cargo.toml         |  5 ++--
+ crates/rustc_codegen_nvvm/build.rs           | 24 ++++----------------
+ crates/rustc_codegen_nvvm/src/abi.rs         |  2 +-
+ crates/rustc_codegen_nvvm/src/builder.rs     |  2 +-
+ crates/rustc_codegen_nvvm/src/const_ty.rs    |  2 +-
+ crates/rustc_codegen_nvvm/src/consts.rs      |  2 +-
+ crates/rustc_codegen_nvvm/src/context.rs     |  2 +-
+ crates/rustc_codegen_nvvm/src/int_replace.rs |  2 +-
+ crates/rustc_codegen_nvvm/src/intrinsic.rs   |  2 +-
+ crates/rustc_codegen_nvvm/src/lib.rs         |  9 +-------
+ crates/rustc_codegen_nvvm/src/link.rs        |  2 +-
+ crates/rustc_codegen_nvvm/src/lto.rs         |  2 +-
+ crates/rustc_codegen_nvvm/src/mono_item.rs   |  2 +-
+ crates/rustc_codegen_nvvm/src/nvvm.rs        |  2 +-
+ crates/rustc_codegen_nvvm/src/ty.rs          |  2 +-
+ crates/rustc_codegen_nvvm_macros/src/lib.rs  |  2 +-
+ 16 files changed, 21 insertions(+), 43 deletions(-)
+
+diff --git a/crates/rustc_codegen_nvvm/Cargo.toml b/crates/rustc_codegen_nvvm/Cargo.toml
+index 01f7473..32b461f 100644
+--- a/crates/rustc_codegen_nvvm/Cargo.toml
++++ b/crates/rustc_codegen_nvvm/Cargo.toml
+@@ -21,9 +21,8 @@ libc = "0.2.97"
+ tar = "0.4.35"
+ once_cell = "1.8.0"
+ bitflags = "1.3.2"
+-tracing = { version = "0.1.29", features = ["release_max_level_debug"] }
++log = "0.4.0"
+ find_cuda_helper = { version = "0.2", path = "../find_cuda_helper" }
+-tracing-subscriber = { version = "0.3.1", features = ["env-filter"] }
+ rustc_codegen_nvvm_macros = { version = "0.1", path = "../rustc_codegen_nvvm_macros" }
+ 
+ [build-dependencies]
+@@ -31,7 +30,7 @@ build-helper = "0.1.1"
+ cc = { version = "1.0", features = ["parallel"] }
+ xz = "0.1.0"
+ tar = "0.4.37"
+-curl = "0.4.40"
++reqwest = { version = "0.11.8", features = ["blocking", "native-tls-vendored"] }
+ 
+ [package.metadata.rust-analyzer]
+ rustc_private = true
+diff --git a/crates/rustc_codegen_nvvm/build.rs b/crates/rustc_codegen_nvvm/build.rs
+index e5ed44f..450cd33 100644
+--- a/crates/rustc_codegen_nvvm/build.rs
++++ b/crates/rustc_codegen_nvvm/build.rs
+@@ -6,7 +6,6 @@ use std::{
+     process::{Command, Stdio},
+ };
+ 
+-use curl::easy::Easy;
+ use tar::Archive;
+ use xz::read::XzDecoder;
+ 
+@@ -88,25 +87,12 @@ fn find_llvm_config(target: &str) -> PathBuf {
+     url = format!("{}{}", url, prebuilt_name);
+ 
+     let out = env::var("OUT_DIR").expect("OUT_DIR was not set");
+-    let mut easy = Easy::new();
+-
+-    easy.url(&url).unwrap();
+-    let _redirect = easy.follow_location(true).unwrap();
+-    let mut xz_encoded = Vec::with_capacity(20_000_000); // 20mb
+-    {
+-        let mut transfer = easy.transfer();
+-        transfer
+-            .write_function(|data| {
+-                xz_encoded.extend_from_slice(data);
+-                Ok(data.len())
+-            })
+-            .expect("Failed to download prebuilt LLVM");
+-        transfer
+-            .perform()
+-            .expect("Failed to download prebuilt LLVM");
+-    }
++    let xz_encoded = reqwest::blocking::get(&url)
++        .expect("Failed to download prebuilt LLVM")
++        .bytes()
++        .expect("Failed to download prebuilt LLVM");
+ 
+-    let decompressor = XzDecoder::new(xz_encoded.as_slice());
++    let decompressor = XzDecoder::new(&*xz_encoded);
+     let mut ar = Archive::new(decompressor);
+ 
+     ar.unpack(&out).expect("Failed to unpack LLVM to LLVM dir");
+diff --git a/crates/rustc_codegen_nvvm/src/abi.rs b/crates/rustc_codegen_nvvm/src/abi.rs
+index f9adb1b..78c85b0 100644
+--- a/crates/rustc_codegen_nvvm/src/abi.rs
++++ b/crates/rustc_codegen_nvvm/src/abi.rs
+@@ -16,7 +16,7 @@ pub use rustc_target::abi::call::*;
+ use rustc_target::abi::call::{CastTarget, Reg, RegKind};
+ use rustc_target::abi::{self, HasDataLayout, Int};
+ pub use rustc_target::spec::abi::Abi;
+-use tracing::trace;
++use log::trace;
+ 
+ pub(crate) fn readjust_fn_abi<'tcx>(
+     tcx: TyCtxt<'tcx>,
+diff --git a/crates/rustc_codegen_nvvm/src/builder.rs b/crates/rustc_codegen_nvvm/src/builder.rs
+index fdb0c9c..c7dc6b1 100644
+--- a/crates/rustc_codegen_nvvm/src/builder.rs
++++ b/crates/rustc_codegen_nvvm/src/builder.rs
+@@ -23,7 +23,7 @@ use std::borrow::Cow;
+ use std::ffi::{CStr, CString};
+ use std::ops::Deref;
+ use std::ptr;
+-use tracing::trace;
++use log::trace;
+ 
+ // All Builders must have an llfn associated with them
+ #[must_use]
+diff --git a/crates/rustc_codegen_nvvm/src/const_ty.rs b/crates/rustc_codegen_nvvm/src/const_ty.rs
+index 96d6dcb..3b664c8 100644
+--- a/crates/rustc_codegen_nvvm/src/const_ty.rs
++++ b/crates/rustc_codegen_nvvm/src/const_ty.rs
+@@ -12,7 +12,7 @@ use rustc_middle::ty::layout::LayoutOf;
+ use rustc_middle::ty::{layout::TyAndLayout, ScalarInt};
+ use rustc_span::Symbol;
+ use rustc_target::abi::{self, AddressSpace, HasDataLayout, Size};
+-use tracing::trace;
++use log::trace;
+ 
+ impl<'ll, 'tcx> ConstMethods<'tcx> for CodegenCx<'ll, 'tcx> {
+     fn const_data_from_alloc(&self, alloc: &Allocation) -> &'ll Value {
+diff --git a/crates/rustc_codegen_nvvm/src/consts.rs b/crates/rustc_codegen_nvvm/src/consts.rs
+index 82378af..a76b2a2 100644
+--- a/crates/rustc_codegen_nvvm/src/consts.rs
++++ b/crates/rustc_codegen_nvvm/src/consts.rs
+@@ -22,7 +22,7 @@ use rustc_span::Symbol;
+ use rustc_target::abi::{
+     AddressSpace, Align, HasDataLayout, Primitive, Scalar, Size, WrappingRange,
+ };
+-use tracing::trace;
++use log::trace;
+ 
+ use crate::{context::CodegenCx, ty::LayoutLlvmExt};
+ 
+diff --git a/crates/rustc_codegen_nvvm/src/context.rs b/crates/rustc_codegen_nvvm/src/context.rs
+index 49ea650..d7b7cc0 100644
+--- a/crates/rustc_codegen_nvvm/src/context.rs
++++ b/crates/rustc_codegen_nvvm/src/context.rs
+@@ -34,7 +34,7 @@ use std::os::raw::c_char;
+ use std::path::PathBuf;
+ use std::ptr::null;
+ use std::str::FromStr;
+-use tracing::{debug, trace};
++use log::{debug, trace};
+ 
+ pub(crate) struct CodegenCx<'ll, 'tcx> {
+     pub tcx: TyCtxt<'tcx>,
+diff --git a/crates/rustc_codegen_nvvm/src/int_replace.rs b/crates/rustc_codegen_nvvm/src/int_replace.rs
+index 03f93ee..c38edf4 100644
+--- a/crates/rustc_codegen_nvvm/src/int_replace.rs
++++ b/crates/rustc_codegen_nvvm/src/int_replace.rs
+@@ -1,5 +1,5 @@
+ use rustc_codegen_ssa::traits::BaseTypeMethods;
+-use tracing::trace;
++use log::trace;
+ 
+ use crate::builder::unnamed;
+ use crate::context::CodegenCx;
+diff --git a/crates/rustc_codegen_nvvm/src/intrinsic.rs b/crates/rustc_codegen_nvvm/src/intrinsic.rs
+index 4359f4b..e3c976e 100644
+--- a/crates/rustc_codegen_nvvm/src/intrinsic.rs
++++ b/crates/rustc_codegen_nvvm/src/intrinsic.rs
+@@ -16,7 +16,7 @@ use rustc_span::Span;
+ use rustc_span::{sym, Symbol};
+ use rustc_target::abi::call::{FnAbi, PassMode};
+ use rustc_target::abi::{self, HasDataLayout, Primitive};
+-use tracing::trace;
++use log::trace;
+ 
+ // libnvvm does not support some advanced intrinsics for i128 so we just abort on them for now. In the future
+ // we should emulate them in software.
+diff --git a/crates/rustc_codegen_nvvm/src/lib.rs b/crates/rustc_codegen_nvvm/src/lib.rs
+index b224e84..ceabc52 100644
+--- a/crates/rustc_codegen_nvvm/src/lib.rs
++++ b/crates/rustc_codegen_nvvm/src/lib.rs
+@@ -68,7 +68,7 @@ use rustc_middle::{
+     ty::TyCtxt,
+ };
+ use rustc_session::{cstore::MetadataLoaderDyn, Session};
+-use tracing::debug;
++use log::debug;
+ 
+ use std::ffi::CString;
+ 
+@@ -87,13 +87,6 @@ unsafe impl Sync for NvvmCodegenBackend {}
+ 
+ impl CodegenBackend for NvvmCodegenBackend {
+     fn init(&self, sess: &Session) {
+-        let filter = tracing_subscriber::EnvFilter::from_env("NVVM_LOG");
+-        let subscriber = tracing_subscriber::fmt()
+-            .with_env_filter(filter)
+-            .compact()
+-            .finish();
+-
+-        tracing::subscriber::set_global_default(subscriber).expect("no default subscriber");
+         init::init(sess);
+     }
+     fn metadata_loader(&self) -> Box<MetadataLoaderDyn> {
+diff --git a/crates/rustc_codegen_nvvm/src/link.rs b/crates/rustc_codegen_nvvm/src/link.rs
+index 0d5e484..196217f 100644
+--- a/crates/rustc_codegen_nvvm/src/link.rs
++++ b/crates/rustc_codegen_nvvm/src/link.rs
+@@ -22,7 +22,7 @@ use std::{
+     path::{Path, PathBuf},
+ };
+ use tar::{Archive, Builder, Header};
+-use tracing::{debug, trace};
++use log::{debug, trace};
+ 
+ use crate::context::CodegenArgs;
+ use crate::LlvmMod;
+diff --git a/crates/rustc_codegen_nvvm/src/lto.rs b/crates/rustc_codegen_nvvm/src/lto.rs
+index 74c51d6..7aaf2bc 100644
+--- a/crates/rustc_codegen_nvvm/src/lto.rs
++++ b/crates/rustc_codegen_nvvm/src/lto.rs
+@@ -13,7 +13,7 @@ use std::{
+     ffi::{CStr, CString},
+     sync::Arc,
+ };
+-use tracing::{debug, trace};
++use log::{debug, trace};
+ 
+ use crate::NvvmCodegenBackend;
+ 
+diff --git a/crates/rustc_codegen_nvvm/src/mono_item.rs b/crates/rustc_codegen_nvvm/src/mono_item.rs
+index a84c757..470d9cf 100644
+--- a/crates/rustc_codegen_nvvm/src/mono_item.rs
++++ b/crates/rustc_codegen_nvvm/src/mono_item.rs
+@@ -12,7 +12,7 @@ use rustc_middle::mir::mono::{Linkage, Visibility};
+ use rustc_middle::ty::layout::FnAbiOf;
+ use rustc_middle::ty::layout::LayoutOf;
+ use rustc_middle::ty::{self, Instance, TypeFoldable};
+-use tracing::trace;
++use log::trace;
+ 
+ pub(crate) fn visibility_to_llvm(linkage: Visibility) -> llvm::Visibility {
+     match linkage {
+diff --git a/crates/rustc_codegen_nvvm/src/nvvm.rs b/crates/rustc_codegen_nvvm/src/nvvm.rs
+index 00f2c84..e0fd25d 100644
+--- a/crates/rustc_codegen_nvvm/src/nvvm.rs
++++ b/crates/rustc_codegen_nvvm/src/nvvm.rs
+@@ -15,7 +15,7 @@ use std::fmt::Display;
+ use std::marker::PhantomData;
+ use std::path::Path;
+ use std::{fs, ptr};
+-use tracing::debug;
++use log::debug;
+ 
+ // see libintrinsics.ll on what this is.
+ const LIBINTRINSICS: &[u8] = include_bytes!("../libintrinsics.bc");
+diff --git a/crates/rustc_codegen_nvvm/src/ty.rs b/crates/rustc_codegen_nvvm/src/ty.rs
+index 55102db..fdbe186 100644
+--- a/crates/rustc_codegen_nvvm/src/ty.rs
++++ b/crates/rustc_codegen_nvvm/src/ty.rs
+@@ -25,7 +25,7 @@ use std::ffi::CString;
+ use std::fmt::{Debug, Write};
+ use std::hash::Hash;
+ use std::ptr;
+-use tracing::trace;
++use log::trace;
+ 
+ impl PartialEq for Type {
+     fn eq(&self, other: &Self) -> bool {
+diff --git a/crates/rustc_codegen_nvvm_macros/src/lib.rs b/crates/rustc_codegen_nvvm_macros/src/lib.rs
+index f799077..cad8e62 100644
+--- a/crates/rustc_codegen_nvvm_macros/src/lib.rs
++++ b/crates/rustc_codegen_nvvm_macros/src/lib.rs
+@@ -42,7 +42,7 @@ pub fn trace_ffi_calls(_attr: TokenStream, item: TokenStream) -> TokenStream {
+ 
+             let new_func = parse_quote! {
+                 pub(crate) unsafe fn #ident #generics(#inputs) #output {
+-                    tracing::trace!(stringify!(#ident));
++                    log::trace!(stringify!(#ident));
+                     super::private::#ident(#args)
+                 }
+             };
+-- 
+2.40.1
+

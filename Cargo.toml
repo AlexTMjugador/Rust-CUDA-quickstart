@@ -1,0 +1,6 @@
+[workspace]
+members = ["packages/*"]
+
+[patch.crates-io]
+rustc_codegen_nvvm = { path = "vendor/Rust-CUDA/crates/rustc_codegen_nvvm" }
+#reqwest = { path = "vendor/reqwest" }
